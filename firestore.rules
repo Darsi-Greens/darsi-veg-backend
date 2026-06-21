@@ -1,0 +1,146 @@
+rules_version = '2';
+//
+// Darsi Greens — Firestore Security Rules
+//
+// Security model: This app uses a shared PIN (no per-user Firebase Auth).
+// These rules enforce server-side data validation so garbage writes are
+// rejected even if someone obtains the API key from the APK.
+//
+// NEXT STEP for stronger auth: Call Firebase Anonymous Auth on PIN success
+// so rules can check `request.auth != null`. Until then, data validation
+// is the primary guard.
+//
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ────────────────────────────────────────────────────
+
+    // YYYY-MM-DD string
+    function isDate(v) {
+      return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function isPositive(v) {
+      return v is number && v > 0;
+    }
+
+    function isNonNeg(v) {
+      return v is number && v >= 0;
+    }
+
+    function hasFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    // ── vegetables — read-only from app, write via Admin SDK only ───────────
+    match /vegetables/{vegId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ── prices/{YYYY-MM-DD}/vegetables/{vegId} ──────────────────────────────
+    match /prices/{dateId}/vegetables/{vegId} {
+      allow read: if true;
+      allow write: if isDate(dateId)
+        && hasFields(request.resource.data, ['sell_price', 'veg_id'])
+        && isNonNeg(request.resource.data.sell_price)
+        && request.resource.data.veg_id is string;
+    }
+
+    // ── vendors — read-only from app ────────────────────────────────────────
+    match /vendors/{vendorId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ── vendor_orders ───────────────────────────────────────────────────────
+    match /vendor_orders/{orderId} {
+      allow read: if true;
+
+      allow create: if
+        hasFields(request.resource.data, ['vendor_name', 'order_date', 'items', 'total_amount', 'status', 'payment_status'])
+        && request.resource.data.vendor_name is string
+        && request.resource.data.vendor_name.size() > 0
+        && request.resource.data.vendor_name.size() <= 100
+        && isDate(request.resource.data.order_date)
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 50
+        && isNonNeg(request.resource.data.total_amount)
+        && request.resource.data.status in ['placed', 'received']
+        && request.resource.data.payment_status in ['pending', 'partial', 'paid'];
+
+      // Only allow updating status and received_at (toggle received)
+      // or payment fields
+      allow update: if
+        request.resource.data.status in ['placed', 'received']
+        && request.resource.data.vendor_name == resource.data.vendor_name
+        && request.resource.data.order_date == resource.data.order_date;
+    }
+
+    // ── sales ───────────────────────────────────────────────────────────────
+    match /sales/{saleId} {
+      allow read: if true;
+
+      allow create: if
+        hasFields(request.resource.data, ['veg_id', 'sale_date', 'quantity', 'sell_price', 'total_amount', 'payment_mode'])
+        && request.resource.data.veg_id is string
+        && request.resource.data.veg_id.size() > 0
+        && isDate(request.resource.data.sale_date)
+        && isPositive(request.resource.data.quantity)
+        && isPositive(request.resource.data.sell_price)
+        && isPositive(request.resource.data.total_amount)
+        && request.resource.data.payment_mode in ['cash', 'upi', 'credit'];
+
+      // Allow marking credit as paid
+      allow update: if
+        request.resource.data.credit_paid is bool
+        && request.resource.data.veg_id    == resource.data.veg_id
+        && request.resource.data.sale_date == resource.data.sale_date
+        && request.resource.data.quantity  == resource.data.quantity;
+    }
+
+    // ── stock_log ───────────────────────────────────────────────────────────
+    match /stock_log/{logId} {
+      allow read: if true;
+
+      allow create: if
+        hasFields(request.resource.data, ['veg_id', 'type', 'quantity', 'log_date'])
+        && request.resource.data.veg_id is string
+        && request.resource.data.veg_id.size() > 0
+        && request.resource.data.type in ['in', 'out', 'adjustment', 'wastage', 'return', 'carry_over']
+        && isPositive(request.resource.data.quantity)
+        && isDate(request.resource.data.log_date);
+    }
+
+    // ── daily_expenses ──────────────────────────────────────────────────────
+    match /daily_expenses/{expId} {
+      allow read: if true;
+
+      allow create: if
+        hasFields(request.resource.data, ['expense_date', 'type', 'amount'])
+        && isDate(request.resource.data.expense_date)
+        && request.resource.data.type is string
+        && request.resource.data.type.size() > 0
+        && isPositive(request.resource.data.amount)
+        && request.resource.data.amount <= 1000000; // sanity cap ₹10 lakh
+    }
+
+    // ── daily_summary ───────────────────────────────────────────────────────
+    match /daily_summary/{summaryId} {
+      allow read: if true;
+
+      allow write: if
+        isDate(summaryId)
+        && (
+          !('customer_count' in request.resource.data)
+          || isNonNeg(request.resource.data.customer_count)
+        );
+    }
+
+    // ── Deny everything else ─────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
