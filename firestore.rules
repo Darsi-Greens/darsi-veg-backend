@@ -2,18 +2,24 @@ rules_version = '2';
 //
 // Darsi Greens — Firestore Security Rules
 //
-// Security model: This app uses a shared PIN (no per-user Firebase Auth).
-// These rules enforce server-side data validation so garbage writes are
-// rejected even if someone obtains the API key from the APK.
+// Security model: The app signs in with Firebase Anonymous Auth on launch, so
+// every request carries `request.auth != null`. These rules require that AND
+// enforce server-side data validation, so the database is neither world-readable
+// nor writable by anyone who merely extracts the API key from the APK.
 //
-// NEXT STEP for stronger auth: Call Firebase Anonymous Auth on PIN success
-// so rules can check `request.auth != null`. Until then, data validation
-// is the primary guard.
+// ⚠️ DEPLOY ORDER: Enable the Anonymous sign-in provider in EACH Firebase
+// project (dev/staging/shop) and confirm sign-in works in STG BEFORE deploying
+// these rules — otherwise the app loses all DB access. Roll out STG first.
 //
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ── Helper functions ────────────────────────────────────────────────────
+
+    // Request comes from an authenticated client (anonymous auth counts).
+    function signedIn() {
+      return request.auth != null;
+    }
 
     // YYYY-MM-DD string
     function isDate(v) {
@@ -34,14 +40,15 @@ service cloud.firestore {
 
     // ── vegetables — read-only from app, write via Admin SDK only ───────────
     match /vegetables/{vegId} {
-      allow read: if true;
+      allow read: if signedIn();
       allow write: if false;
     }
 
     // ── prices/{YYYY-MM-DD}/vegetables/{vegId} ──────────────────────────────
     match /prices/{dateId}/vegetables/{vegId} {
-      allow read: if true;
-      allow write: if isDate(dateId)
+      allow read: if signedIn();
+      allow write: if signedIn()
+        && isDate(dateId)
         && hasFields(request.resource.data, ['sell_price', 'veg_id'])
         && isNonNeg(request.resource.data.sell_price)
         && request.resource.data.veg_id is string;
@@ -49,15 +56,15 @@ service cloud.firestore {
 
     // ── vendors — read-only from app ────────────────────────────────────────
     match /vendors/{vendorId} {
-      allow read: if true;
+      allow read: if signedIn();
       allow write: if false;
     }
 
     // ── vendor_orders ───────────────────────────────────────────────────────
     match /vendor_orders/{orderId} {
-      allow read: if true;
+      allow read: if signedIn();
 
-      allow create: if
+      allow create: if signedIn() &&
         hasFields(request.resource.data, ['vendor_name', 'order_date', 'items', 'total_amount', 'status', 'payment_status'])
         && request.resource.data.vendor_name is string
         && request.resource.data.vendor_name.size() > 0
@@ -71,18 +78,20 @@ service cloud.firestore {
         && request.resource.data.payment_status in ['pending', 'partial', 'paid'];
 
       // Only allow updating status and received_at (toggle received)
-      // or payment fields
-      allow update: if
-        request.resource.data.status in ['placed', 'received']
+      // or payment fields. Core fields are pinned so they can't be rewritten.
+      allow update: if signedIn()
+        && request.resource.data.status in ['placed', 'received']
         && request.resource.data.vendor_name == resource.data.vendor_name
-        && request.resource.data.order_date == resource.data.order_date;
+        && request.resource.data.order_date == resource.data.order_date
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.total_amount == resource.data.total_amount;
     }
 
     // ── sales ───────────────────────────────────────────────────────────────
     match /sales/{saleId} {
-      allow read: if true;
+      allow read: if signedIn();
 
-      allow create: if
+      allow create: if signedIn() &&
         hasFields(request.resource.data, ['veg_id', 'sale_date', 'quantity', 'sell_price', 'total_amount', 'payment_mode'])
         && request.resource.data.veg_id is string
         && request.resource.data.veg_id.size() > 0
@@ -93,8 +102,8 @@ service cloud.firestore {
         && request.resource.data.payment_mode in ['cash', 'upi', 'credit'];
 
       // Allow marking credit as paid
-      allow update: if
-        request.resource.data.credit_paid is bool
+      allow update: if signedIn()
+        && request.resource.data.credit_paid is bool
         && request.resource.data.veg_id    == resource.data.veg_id
         && request.resource.data.sale_date == resource.data.sale_date
         && request.resource.data.quantity  == resource.data.quantity;
@@ -102,9 +111,9 @@ service cloud.firestore {
 
     // ── stock_log ───────────────────────────────────────────────────────────
     match /stock_log/{logId} {
-      allow read: if true;
+      allow read: if signedIn();
 
-      allow create: if
+      allow create: if signedIn() &&
         hasFields(request.resource.data, ['veg_id', 'type', 'quantity', 'log_date'])
         && request.resource.data.veg_id is string
         && request.resource.data.veg_id.size() > 0
@@ -115,9 +124,9 @@ service cloud.firestore {
 
     // ── daily_expenses ──────────────────────────────────────────────────────
     match /daily_expenses/{expId} {
-      allow read: if true;
+      allow read: if signedIn();
 
-      allow create: if
+      allow create: if signedIn() &&
         hasFields(request.resource.data, ['expense_date', 'type', 'amount'])
         && isDate(request.resource.data.expense_date)
         && request.resource.data.type is string
@@ -128,10 +137,10 @@ service cloud.firestore {
 
     // ── daily_summary ───────────────────────────────────────────────────────
     match /daily_summary/{summaryId} {
-      allow read: if true;
+      allow read: if signedIn();
 
-      allow write: if
-        isDate(summaryId)
+      allow write: if signedIn()
+        && isDate(summaryId)
         && (
           !('customer_count' in request.resource.data)
           || isNonNeg(request.resource.data.customer_count)
