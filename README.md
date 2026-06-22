@@ -3,22 +3,30 @@
 
 ## Security Rules
 
-| File | Protects |
-|------|----------|
-| `firestore.rules` | All Firestore collections — field/type/range validation |
-| `storage.rules` | Storage bucket — `receipts/{orderId}/*` (10 MB image cap), `vegetables/{vegId}/*` (5 MB image cap); all other paths denied |
+| File | Protects | Status |
+|------|----------|--------|
+| `firestore.rules` | All Firestore collections — field/type/range validation | **Active** |
+| `storage.rules` | Storage bucket — `receipts/{orderId}/*` (10 MB cap), `vegetables/{vegId}/*` (5 MB cap) | **Dormant** — see note |
 
 Both use the shared-PIN model (no per-user auth yet) and validate by
 path + content rather than `request.auth`.
+
+> **Note — Storage is not in use.** Firebase Storage requires the Blaze
+> (billing-card) plan, which this project does not have. **Order receipts are
+> uploaded to Cloudinary's free tier instead** (see the app repo's
+> `OrdersScreen.js` + `EXPO_PUBLIC_CLOUDINARY_*` env vars). `storage.rules` /
+> `firebase.json` are kept only for the future case where Blaze is enabled for
+> the planned vegetable-photo feature — do not rely on them today.
 
 ### Deploy
 
 `firebase.json` wires both rule files. When the Firebase CLI is available:
 
 ```bash
-firebase deploy --only firestore:rules,storage --project darsi-veg-staging
-firebase deploy --only firestore:rules,storage --project darsi-veg-shop
+# Firestore rules only (Storage skipped — no Blaze plan)
+firebase deploy --only firestore:rules --project darsi-veg-staging
+firebase deploy --only firestore:rules --project darsi-veg-shop
 ```
 
-If the CLI is unavailable, paste the contents of each `.rules` file into the
-Firebase Console (Firestore → Rules, Storage → Rules) for the target project.
+If the CLI is unavailable, paste `firestore.rules` into the Firebase Console
+(Firestore → Rules) for the target project.
