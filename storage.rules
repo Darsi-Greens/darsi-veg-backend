@@ -1,0 +1,43 @@
+rules_version = '2';
+//
+// Darsi Greens — Firebase Storage Security Rules
+//
+// Security model: This app uses a shared PIN (no per-user Firebase Auth),
+// same as firestore.rules. These rules constrain uploads by path, content
+// type and size so the bucket can't be abused even if someone extracts the
+// API key from the APK.
+//
+// NEXT STEP for stronger auth: Call Firebase Anonymous Auth on PIN success
+// so rules can check `request.auth != null`. Until then, path + file
+// validation is the primary guard.
+//
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Helper functions ──────────────────────────────────────────────────
+
+    // Uploaded object is an image under the size cap
+    function isImageUnder(maxBytes) {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < maxBytes;
+    }
+
+    // ── receipts/{orderId}/{fileName} — vendor order receipt photos ────────
+    // OrdersScreen uploads to receipts/{orderId}/{timestamp}.jpg
+    match /receipts/{orderId}/{fileName} {
+      allow read: if true;
+      allow write: if isImageUnder(10 * 1024 * 1024); // 10 MB cap
+    }
+
+    // ── vegetables/{vegId}/{fileName} — vegetable photos (planned) ─────────
+    match /vegetables/{vegId}/{fileName} {
+      allow read: if true;
+      allow write: if isImageUnder(5 * 1024 * 1024); // 5 MB cap
+    }
+
+    // ── Deny everything else ───────────────────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
