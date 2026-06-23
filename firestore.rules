@@ -120,6 +120,16 @@ service cloud.firestore {
         && request.resource.data.type in ['in', 'out', 'adjustment', 'wastage', 'return', 'carry_over']
         && isPositive(request.resource.data.quantity)
         && isDate(request.resource.data.log_date);
+
+      // carry_over uses a deterministic doc id per veg/day and is SET (overwritten)
+      // so the shopkeeper can correct it up OR down. Only carry_over docs may be
+      // updated; type/veg/date are pinned and the new quantity must be >= 0.
+      allow update: if signedIn()
+        && resource.data.type == 'carry_over'
+        && request.resource.data.type == 'carry_over'
+        && request.resource.data.veg_id == resource.data.veg_id
+        && request.resource.data.log_date == resource.data.log_date
+        && isNonNeg(request.resource.data.quantity);
     }
 
     // ── daily_expenses ──────────────────────────────────────────────────────
