@@ -38,10 +38,16 @@ service cloud.firestore {
       return data.keys().hasAll(fields);
     }
 
-    // ── vegetables — read-only from app, write via Admin SDK only ───────────
+    // ── vegetables — managed from the in-app Admin panel (PIN-gated client-side) ──
     match /vegetables/{vegId} {
       allow read: if signedIn();
-      allow write: if false;
+      // Authenticated create/update with basic validation. (delete has no
+      // request.resource → denied; the app soft-deletes via active:false.)
+      allow write: if signedIn()
+        && request.resource.data.name_en is string
+        && request.resource.data.name_en.size() > 0
+        && request.resource.data.name_en.size() <= 60
+        && request.resource.data.unit in ['kg', 'piece', 'bundle', 'dozen'];
     }
 
     // ── prices/{YYYY-MM-DD}/vegetables/{vegId} ──────────────────────────────
@@ -54,10 +60,13 @@ service cloud.firestore {
         && request.resource.data.veg_id is string;
     }
 
-    // ── vendors — read-only from app ────────────────────────────────────────
+    // ── vendors — managed from the in-app Admin panel (PIN-gated client-side) ──
     match /vendors/{vendorId} {
       allow read: if signedIn();
-      allow write: if false;
+      allow write: if signedIn()
+        && request.resource.data.name_en is string
+        && request.resource.data.name_en.size() > 0
+        && request.resource.data.name_en.size() <= 100;
     }
 
     // ── vendor_orders ───────────────────────────────────────────────────────
