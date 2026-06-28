@@ -86,14 +86,16 @@ service cloud.firestore {
         && request.resource.data.status in ['placed', 'received']
         && request.resource.data.payment_status in ['pending', 'partial', 'paid'];
 
-      // Only allow updating status and received_at (toggle received)
-      // or payment fields. Core fields are pinned so they can't be rewritten.
+      // Updates cover: receive (sets weighed/price into items + total_amount,
+      // status placed→received) and payment/receipt fields. items + total_amount
+      // are NOT pinned because receiving rewrites them with the bill values.
+      // vendor_name + order_date stay locked; total stays non-negative.
       allow update: if signedIn()
         && request.resource.data.status in ['placed', 'received']
         && request.resource.data.vendor_name == resource.data.vendor_name
         && request.resource.data.order_date == resource.data.order_date
-        && request.resource.data.items == resource.data.items
-        && request.resource.data.total_amount == resource.data.total_amount;
+        && request.resource.data.items is list
+        && isNonNeg(request.resource.data.total_amount);
     }
 
     // ── sales ───────────────────────────────────────────────────────────────
